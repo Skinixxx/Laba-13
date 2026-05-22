@@ -2,3 +2,7 @@ orchestrator/venv/
 *.log
 __pycache__/
 *.pyc
+
+*.pdf
+PROMPT_LOG_EXAMPLE.md
+/.vscode

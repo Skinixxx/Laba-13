@@ -298,29 +298,61 @@ func main() {
 
 ---
 
-### Pipeline (цепочка агентов для Задания 2)
+## Задание 2: Цепочка задач (Pipeline)
+
+### Описание
+
+Реализована последовательная обработка задачи через всех 4 агентов. Оркестратор управляет цепочкой: результат каждого шага передаётся на вход следующему.
+
+### Pipeline Flow
 
 ```mermaid
 sequenceDiagram
-    Orchestrator->>+CourseRec: recommend courses
-    CourseRec-->>-Orchestrator: recommendations
-    Orchestrator->>+AssignmentCheck: check assignment
-    AssignmentCheck-->>-Orchestrator: result
-    Orchestrator->>+ProgressAnalysis: analyze progress
-    ProgressAnalysis-->>-Orchestrator: progress report
-    Orchestrator->>+CertificateGen: generate certificate
-    CertificateGen-->>-Orchestrator: certificate
+    participant O as Orchestrator
+    participant CR as CourseRec Agent
+    participant AC as AssignmentCheck Agent
+    participant PA as ProgressAnalysis Agent
+    participant CG as CertificateGen Agent
+
+    O->>+CR: recommend courses
+    CR-->>-O: top course
+    O->>+AC: check assignment (course_id from step 1)
+    AC-->>-O: check result (score, passed)
+    O->>+PA: analyze progress (history + new result)
+    PA-->>-O: progress report (completion %, trend)
+    O->>+CG: generate certificate (if passed & >=80%)
+    CG-->>-O: certificate metadata
 ```
+
+### Детали реализации (в `orchestrator.py:run_pipeline()`)
+
+| Шаг | Агент | Вход (откуда данные) | Выход (куда дальше) |
+|-----|-------|---------------------|-------------------|
+| 1 | CourseRec | user profile + history из запроса | top_course (course_id, title, score) |
+| 2 | AssignmentCheck | assignment_id из запроса + course_id из шага 1 | check_result (passed, score, feedback) |
+| 3 | ProgressAnalysis | activity_log из запроса + дополненный результатом шага 2 | progress (completion_pct, avg_score, trend) |
+| 4 | CertificateGen | user_name, course_name из шага 1, grade из шага 2 | certificate (certificate_id, URL, valid_until) |
+
+### Pipeline ID
+
+Каждый pipeline получает уникальный `pipeline_id` (UUID), который логируется на всех шагах для сквозной трассировки.
 
 ---
 
-### Шаги реализации
+### Прогресс выполнения
 
-- [ ] 1.1. Инициализировать Go-модули для всех 4 агентов
-- [ ] 1.2. Реализовать агента **Course Recommendation**
-- [ ] 1.3. Реализовать агента **Assignment Check**
-- [ ] 1.4. Реализовать агента **Progress Analysis**
-- [ ] 1.5. Реализовать агента **Certificate Generation**
-- [ ] 1.6. Написать оркестратор на Python (nats-py + asyncio)
-- [ ] 1.7. Создать docker-compose.yml c NATS
-- [ ] 1.8. Протестировать взаимодействие всех компонентов
+**Задание 1 — выполнено:**
+- [x] 1.1. Инициализировать Go-модули для всех 4 агентов
+- [x] 1.2. Реализовать агента **Course Recommendation**
+- [x] 1.3. Реализовать агента **Assignment Check**
+- [x] 1.4. Реализовать агента **Progress Analysis**
+- [x] 1.5. Реализовать агента **Certificate Generation**
+- [x] 1.6. Написать оркестратор на Python (nats-py + asyncio)
+- [x] 1.7. Создать docker-compose.yml c NATS
+- [x] 1.8. Протестировать взаимодействие всех компонентов
+
+**Задание 2 — выполнено:**
+- [x] 2.1. Реализовать `run_pipeline()` в оркестраторе
+- [x] 2.2. Chain: CourseRec → AssignmentCheck → ProgressAnalysis → CertificateGen
+- [x] 2.3. Сквозной pipeline_id для трассировки
+- [x] 2.4. Условная генерация сертификата (passed + completion >= 80%)

@@ -30,3 +30,50 @@
 7. **Orchestrator (Python)** — 4 тестовых сценария через NATS (nats-py + asyncio)
 8. **docker-compose.yml** — NATS + 4 Go-агента (каждый со своим Dockerfile)
 9. Все 4 Go-агента скомпилированы, Python-зависимости установлены
+
+---
+
+### Задание 1: тестирование и коммит
+
+**User:** Сначала локально систему протестируем.
+
+**Assistant:** Запустил NATS в Docker + 4 агента + оркестратор. Все 4 теста прошли успешно:
+- Course Recommendation → 5 рекомендаций, топ "Машинное обучение с Python" (score: 79)
+- Assignment Check → PASSED (100/100)
+- Progress Analysis → 75% completion, declining trend
+- Certificate Generation → UUID + URL + срок до 2029
+
+**User:** Создай коммит.
+
+**Assistant:** Создан коммит `8dc4445` — 28 файлов, 1670 строк.
+
+---
+
+### Задание 2: pipeline (план)
+
+**User:** Приступаем ко второму заданию. Цепочки задач (pipeline). Составь план.
+
+**Assistant:** Предложил pipeline: Старт → Рекомендация курсов → Проверка задания → Анализ прогресса → Генерация сертификата. Оркестратор управляет цепочкой, агенты не меняются.
+
+**User:** Пайплайн зашел, приступи к реализации.
+
+**Assistant:** Реализовал `run_pipeline()` в оркестраторе:
+1. CourseRec → выбирает топ-курс по интересам
+2. AssignmentCheck → проверяет задание для этого курса
+3. ProgressAnalysis → анализирует прогресс (включая новое задание)
+4. CertificateGen → генерирует сертификат при выполнении условий
+
+---
+
+### Задание 2: тестирование pipeline
+
+**Assistant:** Протестировал pipeline. Результаты:
+
+| Шаг | Агент | Результат |
+|-----|-------|-----------|
+| 1 | CourseRec | "Машинное обучение с Python" (score: 79) |
+| 2 | AssignmentCheck | PASSED (80/100) — эссе |
+| 3 | ProgressAnalysis | 100% completion, avg 81.67, trend stable |
+| 4 | CertificateGen | **Сертификат выдан** — Grade B |
+
+Pipeline ID `2c362a31` — весь chain отработал, cert выдан.
