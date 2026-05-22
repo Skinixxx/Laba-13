@@ -1,7 +1,9 @@
 import asyncio
 import json
 import logging
+import os
 import uuid
+from pathlib import Path
 from typing import Optional
 
 import nats
@@ -10,12 +12,14 @@ from opentelemetry.propagate import inject, extract
 
 from tracer import init_tracer
 
+log_dir = Path(__file__).parent / "logs"
+log_dir.mkdir(exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("orchestrator.log"),
+        logging.FileHandler(str(log_dir / "orchestrator.log")),
     ],
 )
 logger = logging.getLogger("orchestrator")

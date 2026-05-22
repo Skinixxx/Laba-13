@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func InitTracer(serviceName string) (*sdktrace.TracerProvider, error) {
@@ -110,4 +111,4 @@ func ExtractTraceContext(ctx context.Context, headers map[string]string) context
 	return otel.GetTextMapPropagator().Extract(ctx, carrier)
 }
 
-var Tracer = otel.Tracer("e-learning")
+func Tracer() trace.Tracer { return otel.Tracer("e-learning") }

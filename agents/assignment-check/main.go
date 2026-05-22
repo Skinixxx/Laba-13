@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"github.com/apollo/e-learning/shared"
 	"github.com/nats-io/nats.go"
@@ -40,7 +41,7 @@ func main() {
 			}
 		}
 		ctx := shared.ExtractTraceContext(context.Background(), headers)
-		ctx, span := shared.Tracer.Start(ctx, "assignment-check.process",
+		ctx, span := shared.Tracer().Start(ctx, "assignment-check.process",
 			trace.WithAttributes(
 				attribute.String("messaging.system", "nats"),
 				attribute.String("messaging.destination", m.Subject),
@@ -52,6 +53,7 @@ func main() {
 		if err := json.Unmarshal(m.Data, &task); err != nil {
 			log.Printf("Failed to unmarshal task: %v", err)
 			span.RecordError(err)
+			publishError(ctx, nc, "", "failed to unmarshal task: "+err.Error())
 			return
 		}
 		span.SetAttributes(
@@ -95,7 +97,7 @@ func main() {
 
 	log.Println("Assignment Check Agent ready. Waiting for tasks...")
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
 	log.Println("Shutting down...")
 }

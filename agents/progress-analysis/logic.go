@@ -57,12 +57,13 @@ func analyzeProgress(req shared.ProgressRequest) shared.ProgressOutput {
 					declining = false
 				}
 			}
-			switch {
-			case improving:
+			if improving && declining {
+				output.Trend = "stable"
+			} else if improving {
 				output.Trend = "improving"
-			case declining:
+			} else if declining {
 				output.Trend = "declining"
-			default:
+			} else {
 				output.Trend = "stable"
 			}
 		} else {

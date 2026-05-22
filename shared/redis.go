@@ -22,11 +22,13 @@ type ProgressState struct {
 
 func ConnectRedis(addr string) (*redis.Client, error) {
 	client := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: "",
-		DB:       0,
+		Addr:         addr,
+		Password:     "",
+		DB:           0,
+		ReadTimeout:  6 * time.Second,
+		WriteTimeout: 6 * time.Second,
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("redis ping: %w", err)
@@ -36,7 +38,7 @@ func ConnectRedis(addr string) (*redis.Client, error) {
 }
 
 func SaveStateAgent(client *redis.Client, key string, state *ProgressState) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	data, err := json.Marshal(state)
 	if err != nil {
@@ -51,7 +53,7 @@ func SaveStateAgent(client *redis.Client, key string, state *ProgressState) erro
 }
 
 func LoadStateAgent(client *redis.Client, key string) (*ProgressState, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	data, err := client.Get(ctx, key).Bytes()
 	if err != nil {
