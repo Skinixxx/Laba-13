@@ -5,23 +5,29 @@ logger = logging.getLogger("fallback")
 
 def generate_feedback(
     user_name: str,
-    skill_level: str,
-    interests: list[str],
-    course_name: str,
-    assignment_type: str,
-    score: int,
-    max_score: int,
-    passed: bool,
-    trend: str,
-    avg_score: float,
+    skill_level: str = "",
+    interests: list[str] | None = None,
+    course_name: str = "",
+    assignment_type: str = "",
+    score: int = 0,
+    max_score: int = 100,
+    passed: bool = False,
+    trend: str = "stable",
+    avg_score: float = 0,
     **kwargs,
 ) -> str:
+    if interests is None:
+        interests = []
     passed_str = "ПРОЙДЕНО" if passed else "НЕ ПРОЙДЕНО"
     pct = score / max_score * 100 if max_score > 0 else 0
+
+    level_label = {"beginner": "начальный", "intermediate": "средний", "advanced": "продвинутый"}
+    level_str = level_label.get(skill_level, skill_level)
 
     lines = [
         f"📋 Отзыв для {user_name}",
         f"Курс: {course_name} | Задание: {assignment_type}",
+        f"Уровень: {level_str}",
         f"Результат: {score}/{max_score} ({pct:.0f}%) — {passed_str}",
         f"Успеваемость: {trend} | Средний балл: {avg_score:.1f}",
         "",
@@ -57,6 +63,14 @@ def generate_feedback(
         total_tests = kwargs.get("total_tests", 0)
         lines.append(f"Пройдено тестов: {passed_tests}/{total_tests}.")
         lines.append("Проверьте краевые случаи и обработку ошибок в коде.")
+
+    level_advice = {
+        "beginner": "Рекомендуем начать с базовых материалов и постепенно усложнять.",
+        "intermediate": "Попробуйте применить знания в практических проектах.",
+        "advanced": "Обратите внимание на продвинутые техники и оптимизацию.",
+    }
+    if skill_level in level_advice:
+        lines.append(level_advice[skill_level])
 
     if trend == "declining":
         lines.append("⚠️ Ваши результаты снижаются. Рекомендуем записаться на консультацию.")

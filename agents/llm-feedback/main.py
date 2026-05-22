@@ -1,8 +1,9 @@
+import asyncio
 import json
 import logging
 import os
 import signal
-import sys
+from datetime import datetime
 from pathlib import Path
 
 import nats
@@ -109,9 +110,9 @@ async def main():
 
     if OLLAMA_URL:
         try:
-            ollama_available = ollama.is_available()
+            ollama_available = await asyncio.to_thread(ollama.is_available)
             if ollama_available:
-                models = ollama.list_models()
+                models = await asyncio.to_thread(ollama.list_models)
                 logger.info(f"Ollama доступен ({OLLAMA_URL}). Модели: {models}")
             else:
                 logger.warning(f"Ollama НЕ доступен ({OLLAMA_URL}). Используется fallback.")
@@ -132,62 +133,79 @@ async def main():
                 headers[k] = v[0]
 
         ctx = extract_trace_context(headers)
-        with tracer.start_as_current_span("llm-feedback.generate",
-                                          context=ctx) as span:
-            try:
+        feedback_source = "unknown"
+        span = None
+        try:
+            with tracer.start_as_current_span("llm-feedback.generate",
+                                              context=ctx) as span:
                 task = json.loads(msg.data.decode())
                 data = json.loads(task["payload"]) if isinstance(task.get("payload"), str) else task
                 span.set_attribute("task.id", task.get("id", ""))
                 span.set_attribute("user.id", data.get("user_id", ""))
                 span.set_attribute("assignment.type", data.get("assignment_type", ""))
-            except (json.JSONDecodeError, KeyError) as e:
-                logger.error(f"Failed to parse task: {e}")
-                return
 
-            logger.info(
-                f"Generating feedback for {data.get('user_name', '?')} "
-                f"(type={data.get('assignment_type', '?')}, "
-                f"score={data.get('score', '?')}/{data.get('max_score', '?')})"
-            )
+                logger.info(
+                    f"Generating feedback for {data.get('user_name', '?')} "
+                    f"(type={data.get('assignment_type', '?')}, "
+                    f"score={data.get('score', '?')}/{data.get('max_score', '?')})"
+                )
 
-            feedback = ""
+                feedback = ""
 
-            if ollama_available:
-                system_prompt, user_prompt = build_prompt(data)
-                try:
-                    result = ollama.generate(user_prompt, system=system_prompt)
-                    if result:
-                        feedback = result
-                        logger.info("Feedback generated via Ollama")
-                        span.set_attribute("llm.source", "ollama")
-                except Exception as e:
-                    logger.error(f"Ollama generation failed: {e}")
+                if ollama_available:
+                    system_prompt, user_prompt = build_prompt(data)
+                    try:
+                        result = await asyncio.to_thread(
+                            ollama.generate, user_prompt, system_prompt
+                        )
+                        if result:
+                            feedback = result
+                            feedback_source = "ollama"
+                            logger.info("Feedback generated via Ollama")
+                    except Exception as e:
+                        logger.error(f"Ollama generation failed: {e}")
 
-            if not feedback:
-                feedback = generate_feedback(**data)
-                logger.info("Feedback generated via fallback")
-                span.set_attribute("llm.source", "fallback")
+                if not feedback:
+                    feedback = generate_feedback(**data)
+                    feedback_source = "fallback"
+                    logger.info("Feedback generated via fallback")
 
-            span.set_attribute("feedback.length", len(feedback))
-            span.set_attribute("feedback.source", "ollama" if ollama_available and feedback != generate_feedback.__name__ else "fallback")
+                span.set_attribute("feedback.length", len(feedback))
+                span.set_attribute("feedback.source", feedback_source)
 
-            output = {
-                "user_id": data.get("user_id", ""),
-                "feedback": feedback,
-                "generated_at": __import__("datetime").datetime.now().isoformat(),
-            }
+                output = {
+                    "user_id": data.get("user_id", ""),
+                    "feedback": feedback,
+                    "generated_at": datetime.now().isoformat(),
+                }
 
-            result = {
-                "task_id": task.get("id", ""),
-                "success": True,
-                "output": json.dumps(output, ensure_ascii=False),
-            }
+                result = {
+                    "task_id": task.get("id", ""),
+                    "success": True,
+                    "output": json.dumps(output, ensure_ascii=False),
+                }
 
-            response = json.dumps(result, ensure_ascii=False).encode()
-            headers = inject_trace_context()
-            await nc.publish("tasks.completed", response, headers=headers)
+                response = json.dumps(result, ensure_ascii=False).encode()
+                hdrs = inject_trace_context()
+                await nc.publish("tasks.completed", response, headers=hdrs)
 
-            logger.info(f"Feedback sent for task {task.get('id', '')[:8]} ({len(feedback)} chars)")
+                logger.info(f"Feedback sent for task {task.get('id', '')[:8]} ({len(feedback)} chars)")
+        except Exception as e:
+            logger.error(f"Handler failed: {e}", exc_info=True)
+            if span:
+                span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, str(e)))
+            task_id = ""
+            if 'task' in locals():
+                task_id = task.get("id", "") or ""
+            error_result = json.dumps({
+                "task_id": task_id,
+                "success": False,
+                "error": str(e),
+            }, ensure_ascii=False).encode()
+            try:
+                await nc.publish("tasks.completed", error_result)
+            except Exception:
+                pass
 
     await nc.subscribe("tasks.feedback.generate", cb=handler)
     logger.info("LLM Feedback Agent ready. Waiting for tasks...")
