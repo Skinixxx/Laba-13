@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  nats:
+    image: nats:latest
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["-js", "-m", "8222"]
+
+  course-recommendation:
+    build:
+      context: ./agents/course-recommendation
+      dockerfile: Dockerfile
+    depends_on:
+      - nats
+    environment:
+      - NATS_URL=nats://nats:4222
+
+  assignment-check:
+    build:
+      context: ./agents/assignment-check
+      dockerfile: Dockerfile
+    depends_on:
+      - nats
+    environment:
+      - NATS_URL=nats://nats:4222
+
+  progress-analysis:
+    build:
+      context: ./agents/progress-analysis
+      dockerfile: Dockerfile
+    depends_on:
+      - nats
+    environment:
+      - NATS_URL=nats://nats:4222
+
+  certificate-gen:
+    build:
+      context: ./agents/certificate-gen
+      dockerfile: Dockerfile
+    depends_on:
+      - nats
+    environment:
+      - NATS_URL=nats://nats:4222
