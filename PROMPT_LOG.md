@@ -89,7 +89,7 @@ Pipeline ID `2c362a31` — весь chain отработал, сертифика
 - NATS headers для W3C TraceContext propagation
 - Обновление docker-compose: Jaeger all-in-one (порты 4318/16686)
 
-**Промпт 2:** Реализовать.
+**Промпт 2:** Реализовать, все верно.
 
 **Результат:**
 - `shared/otel.go` — InitTracer(serviceName), ShutdownTracer, InjectTraceContext, ExtractTraceContext
@@ -99,7 +99,7 @@ Pipeline ID `2c362a31` — весь chain отработал, сертифика
 - docker-compose.yml — добавлен Jaeger + OTEL_EXPORTER_OTLP_ENDPOINT для всех агентов
 - Dockerfile'ы обновлены (shared-модуль включён в контекст сборки)
 
-**Промпт 3:** Протестировать.
+**Промпт 3:** Проддебажь код.
 
 **Результат:** Запущены NATS + Jaeger + 4 агента + оркестратор. В Jaeger UI:
 
@@ -109,3 +109,50 @@ Pipeline ID `2c362a31` — весь chain отработал, сертифика
 | Pipeline | 9 spans | `pipeline.39c8070e` → 4 step spans + 4 agent.process spans |
 
 Трассировка распределённая: spans от Python-оркестратора и Go-агентов связаны через W3C TraceContext, передаваемый в NATS headers. Jaeger UI доступен на `http://localhost:16686`.
+
+---
+
+## Задание 4 — Агент с состоянием (Redis)
+
+**Промпт 1:** Составим план Задания 4. Нужно реализовать агента, который сохраняет состояние в Redis и восстанавливает при перезапуске. Предлагаю сделать Progress Analysis Agent stateful.
+
+**Результат:**
+- Утверждён план: Redis в docker-compose + `shared/redis.go` + модификация Progress Analysis Agent
+
+**Промпт 2:** Реализовать, протестировать, написать README. Функции переименовать: SaveStateAgent/LoadStateAgent.
+
+**Результат:**
+
+| Компонент | Статус |
+|-----------|--------|
+| `docker-compose.yml` — Redis (healthcheck, depends_on) | ✅ |
+| `shared/redis.go` — ConnectRedis, SaveStateAgent, LoadStateAgent, ProgressState | ✅ |
+| `agents/progress-analysis/main.go` — Redis init, load на старте, save после задач | ✅ |
+| `go.mod` — `redis/go-redis/v9` добавлен в shared | ✅ |
+
+**Логи тестирования (шаг 1 — первый прогон):**
+```
+progress-analysis | No previous state found in Redis — fresh start
+progress-analysis | State saved [agent:progress-analysis:state]: 1 tasks processed, trend=declining
+progress-analysis | State saved [agent:progress-analysis:state]: 2 tasks processed, trend=stable
+```
+
+**Логи тестирования (шаг 2 — перезапуск контейнера):**
+```
+progress-analysis | State restored [agent:progress-analysis:state]: 2 tasks processed, trend=stable
+progress-analysis | State restored: 2 tasks processed, last trend=stable
+```
+→ **Состояние восстановлено после перезапуска.**
+
+**Логи тестирования (шаг 3 — повторный прогон):**
+```
+progress-analysis | State saved [agent:progress-analysis:state]: 3 tasks processed, trend=declining
+progress-analysis | State saved [agent:progress-analysis:state]: 4 tasks processed, trend=stable
+```
+
+| Действие | tasks_processed | Источник |
+|----------|----------------|----------|
+| Start (fresh) | 0 | Redis: key not found |
+| Run 1 | 1 → 2 | SaveStateAgent |
+| **Restart container** | **2 restored** | **LoadStateAgent** |
+| Run 2 | 2 → 3 → 4 | Инкремент от восстановленного |

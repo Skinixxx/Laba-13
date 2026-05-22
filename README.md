@@ -5,8 +5,8 @@
 ## Быстрый старт
 
 ```bash
-# 1. Запустить NATS
-docker run -d --name nats -p 4222:4222 nats:latest
+# 1. Запустить NATS + Redis
+docker compose up -d nats redis
 
 # 2. Запустить 4 Go-агента
 cd agents/course-recommendation && go run . &
@@ -18,7 +18,7 @@ cd agents/certificate-gen && go run . &
 cd orchestrator && source venv/bin/activate && python3 orchestrator.py
 
 # 4. Остановить
-docker stop nats && docker rm nats
+docker compose down
 ```
 
 ## Агенты
@@ -35,7 +35,7 @@ docker stop nats && docker rm nats
 1. Разработка полной системы из 3–5 агентов на Go ✅
 2. Цепочки задач (pipeline) ✅
 3. Распределённая трассировка (Jaeger + OpenTelemetry) ✅
-4. Агент с состоянием (Redis)
+4. Агент с состоянием (Redis) ✅
 5. Динамическое масштабирование
 6. Аукционное распределение задач
 7. Интеграция LLM-агента (Ollama)
@@ -637,3 +637,174 @@ docker stop nats jaeger && docker rm nats jaeger
 - [x] 3.5. W3C TraceContext propagation через NATS headers
 - [x] 3.6. docker-compose с Jaeger
 - [x] 3.7. Протестировано: 2 трейса, 9 spans каждый, Jaeger UI отвечает
+
+**Задание 4 — выполнено:**
+- [x] 4.1. Redis в docker-compose.yml с healthcheck
+- [x] 4.2. `shared/redis.go` — ConnectRedis, SaveStateAgent, LoadStateAgent, ProgressState
+- [x] 4.3. Progress Analysis Agent — загружает состояние при старте, сохраняет после каждой задачи
+- [x] 4.4. Состояние переживает перезапуск контейнера
+
+## Задание 4: Агент с состоянием (Redis)
+
+### План
+
+**Цель:** Добавить Progress Analysis Agent'у постоянное состояние в Redis: счётчик обработанных задач и агрегированная статистика сохраняются после каждой задачи и восстанавливаются при перезапуске.
+
+### Изменённые файлы
+
+| Файл | Изменение |
+|------|-----------|
+| `shared/redis.go` | **Новый** — ConnectRedis, SaveStateAgent, LoadStateAgent, ProgressState struct |
+| `shared/go.mod` | Добавлен `github.com/redis/go-redis/v9 v9.7.3` |
+| `docker-compose.yml` | Добавлен сервис `redis:7-alpine` + healthcheck; `REDIS_URL=redis:6379` для progress-analysis; `depends_on` с `condition: service_healthy`; убран `version: "3.8"` |
+| `agents/progress-analysis/main.go` | На старте: чтение `REDIS_URL`, `ConnectRedis`, `LoadStateAgent`. После каждой задачи: `goroutine updateState()` → `LoadStateAgent` + инкремент + `SaveStateAgent` |
+
+### 1. `shared/redis.go`
+
+#### `ConnectRedis(addr string) (*redis.Client, error)`
+
+Создаёт клиента Redis, проверяет соединение через `Ping` с таймаутом 5 секунд.
+
+#### `SaveStateAgent(client *redis.Client, key string, state *ProgressState) error`
+
+Сериализует `ProgressState` в JSON и сохраняет в Redis по ключу (например, `agent:progress-analysis:state`) без TTL (постоянное хранение).
+
+#### `LoadStateAgent(client *redis.Client, key string) (*ProgressState, error)`
+
+Загружает JSON из Redis по ключу и десериализует в `ProgressState`. Если ключа нет — возвращает `nil, nil` (fresh start).
+
+#### Структура `ProgressState`
+
+```go
+type ProgressState struct {
+    TasksProcessed  int     // счётчик обработанных задач
+    TotalCompletion float64 // суммарный completion (для среднего)
+    TotalAvgScore   float64 // суммарный avg_score (для среднего)
+    LastTrend       string  // последний тренд (improving/declining/stable)
+    InstanceID      string  // hostname контейнера, который сохранил состояние
+}
+```
+
+---
+
+### 2. `agents/progress-analysis/main.go` — интеграция Redis
+
+**На старте:**
+
+```go
+redisURL := os.Getenv("REDIS_URL")
+rdb, err := shared.ConnectRedis(redisURL)   // {"addr": "redis:6379"}
+state, err := shared.LoadStateAgent(rdb, "agent:progress-analysis:state")
+if state == nil {
+    log.Println("No previous state in Redis — fresh start")
+} else {
+    log.Printf("State restored: %d tasks processed", state.TasksProcessed)
+}
+```
+
+**После каждой задачи** (в горутине, не блокируя ответ):
+
+```go
+go updateState(rdb, instanceID, output)
+
+func updateState(rdb *redis.Client, instanceID string, output shared.ProgressOutput) {
+    state, _ := shared.LoadStateAgent(rdb, key)
+    if state == nil {
+        state = &shared.ProgressState{InstanceID: instanceID}
+    }
+    state.TasksProcessed++
+    state.TotalCompletion += output.CompletionPct
+    state.TotalAvgScore += output.AvgScore
+    state.LastTrend = output.Trend
+    state.InstanceID = instanceID
+    shared.SaveStateAgent(rdb, key, state)
+}
+```
+
+---
+
+### 3. docker-compose.yml — Redis
+
+```yaml
+redis:
+  image: redis:7-alpine
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 2s
+    timeout: 1s
+    retries: 10
+
+progress-analysis:
+  depends_on:
+    redis:
+      condition: service_healthy
+  environment:
+    - REDIS_URL=redis:6379
+```
+
+Redis доступен внутри Docker-сети как `redis:6379`. Healthcheck гарантирует, что progress-analysis запустится только после готовности Redis.
+
+---
+
+### 4. Тестирование
+
+#### Шаг 1: запуск через docker-compose и прогон оркестратора
+
+```
+progress-analysis | Connected to Redis at redis:6379
+progress-analysis | No previous state found in Redis — fresh start
+progress-analysis | Progress Analysis Agent ready. Waiting for tasks...
+
+progress-analysis | State saved [agent:progress-analysis:state]: 1 tasks processed, trend=declining
+progress-analysis | State restored [agent:progress-analysis:state]: 1 tasks processed, trend=declining
+progress-analysis | State saved [agent:progress-analysis:state]: 2 tasks processed, trend=stable
+```
+
+#### Шаг 2: перезапуск контейнера (проверка восстановления)
+
+```bash
+docker compose restart progress-analysis
+```
+
+Логи после перезапуска:
+
+```
+progress-analysis | Connected to Redis at redis:6379
+progress-analysis | State restored [agent:progress-analysis:state]: 2 tasks processed, trend=stable
+progress-analysis | State restored: 2 tasks processed, last trend=stable
+progress-analysis | Progress Analysis Agent ready. Waiting for tasks...
+```
+
+Агент восстановил счётчик `2 tasks processed` и `trend=stable` — состояние сохранилось в Redis и пережило полный перезапуск контейнера.
+
+#### Шаг 3: повторный прогон оркестратора
+
+```
+progress-analysis | State restored [agent:progress-analysis:state]: 2 tasks processed, trend=stable
+progress-analysis | State saved [agent:progress-analysis:state]: 3 tasks processed, trend=declining
+progress-analysis | State restored [agent:progress-analysis:state]: 3 tasks processed, trend=declining
+progress-analysis | State saved [agent:progress-analysis:state]: 4 tasks processed, trend=stable
+```
+
+Счётчик не сбросился, а продолжил расти с того же места: `2 → 3 → 4`.
+
+#### Итоговый сценарий
+
+| Действие | tasks_processed | trend | Источник |
+|----------|----------------|-------|----------|
+| Start (fresh) | 0 | — | Redis: key not found |
+| Run 1 | 1 → 2 | declining → stable | `SaveStateAgent` после задач |
+| **Restart container** | **2 restored** | **stable** | **`LoadStateAgent` на старте** |
+| Run 2 | 2 → 3 → 4 | declining → stable | Инкремент от восстановленного |
+
+---
+
+### 5. Вывод
+
+**Реализовано:** постоянное состояние Progress Analysis Agent'а в Redis. Счётчик задач, агрегированные completion/avg_score и последний тренд сохраняются после каждой обработки и восстанавливаются при любом перезапуске — будь то `docker restart`, crash контейнера или деплой новой версии.
+
+Ключевые принципы:
+- **Idempotent restore:** `LoadStateAgent` возвращает `nil` если ключа нет → fresh start без ошибок
+- **No single point of failure:** Redis healthcheck гарантирует порядок запуска, но при недоступности Redis агент продолжает работать без сохранения состояния
+- **Goroutine-safe:** сохранение в горутине не блокирует обработку следующей задачи
+- **Минимальное изменение архитектуры:** добавлен только `shared/redis.go` и ~30 строк в main.go агента

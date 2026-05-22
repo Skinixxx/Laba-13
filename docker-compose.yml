@@ -40,17 +40,30 @@ services:
       - NATS_URL=nats://nats:4222
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
 
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 10
+
   progress-analysis:
     build:
       context: .
       dockerfile: agents/progress-analysis/Dockerfile
     restart: unless-stopped
     depends_on:
-      - nats
-      - jaeger
+      nats:
+        condition: service_started
+      jaeger:
+        condition: service_started
+      redis:
+        condition: service_healthy
     environment:
       - NATS_URL=nats://nats:4222
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - REDIS_URL=redis:6379
 
   certificate-gen:
     build:

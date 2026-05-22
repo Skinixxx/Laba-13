@@ -9,9 +9,12 @@ import (
 
 	"github.com/apollo/e-learning/shared"
 	"github.com/nats-io/nats.go"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
+
+const redisStateKey = "agent:progress-analysis:state"
 
 func main() {
 	tp, err := shared.InitTracer("progress-analysis")
@@ -19,6 +22,9 @@ func main() {
 		log.Fatalf("Failed to init tracer: %v", err)
 	}
 	defer shared.ShutdownTracer(tp)
+
+	instanceID, _ := os.Hostname()
+	log.Printf("Progress Analysis Agent starting (instance: %s)", instanceID)
 
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
@@ -30,7 +36,29 @@ func main() {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
 	defer nc.Close()
-	log.Printf("Progress Analysis Agent connected to NATS at %s", natsURL)
+	log.Printf("Connected to NATS at %s", natsURL)
+
+	var rdb *redis.Client
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL != "" {
+		rdb, err = shared.ConnectRedis(redisURL)
+		if err != nil {
+			log.Printf("WARNING: Redis unavailable, continuing without state persistence: %v", err)
+		} else {
+			defer rdb.Close()
+			state, loadErr := shared.LoadStateAgent(rdb, redisStateKey)
+			if loadErr != nil {
+				log.Printf("WARNING: Failed to load state: %v", loadErr)
+			} else if state == nil {
+				log.Printf("No previous state found in Redis — fresh start")
+			} else {
+				log.Printf("State restored: %d tasks processed, last trend=%s",
+					state.TasksProcessed, state.LastTrend)
+			}
+		}
+	} else {
+		log.Printf("REDIS_URL not set, running without state persistence")
+	}
 
 	_, err = nc.Subscribe("tasks.progress.analyze", func(m *nats.Msg) {
 		headers := make(map[string]string)
@@ -89,6 +117,10 @@ func main() {
 		publishResult(ctx, nc, task.ID, response)
 		log.Printf("Completed task %s — completion: %.1f%%, trend: %s",
 			task.ID, output.CompletionPct, output.Trend)
+
+		if rdb != nil {
+			go updateState(rdb, instanceID, output)
+		}
 	})
 	if err != nil {
 		log.Fatalf("Failed to subscribe: %v", err)
@@ -99,6 +131,29 @@ func main() {
 	signal.Notify(sig, os.Interrupt)
 	<-sig
 	log.Println("Shutting down...")
+}
+
+func updateState(rdb *redis.Client, instanceID string, output shared.ProgressOutput) {
+	key := redisStateKey
+	state, err := shared.LoadStateAgent(rdb, key)
+	if err != nil {
+		log.Printf("Failed to load state for update: %v", err)
+		return
+	}
+	if state == nil {
+		state = &shared.ProgressState{
+			InstanceID: instanceID,
+		}
+	}
+	state.TasksProcessed++
+	state.TotalCompletion += output.CompletionPct
+	state.TotalAvgScore += output.AvgScore
+	state.LastTrend = output.Trend
+	state.InstanceID = instanceID
+
+	if err := shared.SaveStateAgent(rdb, key, state); err != nil {
+		log.Printf("Failed to save state: %v", err)
+	}
 }
 
 func publishError(ctx context.Context, nc *nats.Conn, taskID, errMsg string) {
