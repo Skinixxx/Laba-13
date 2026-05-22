@@ -395,32 +395,212 @@ docker stop nats && docker rm nats
 
 ### Что сделано
 
-- `shared/otel.go` — инициализация OTel tracer (OTLP HTTP exporter → Jaeger), W3C TraceContext propagation через NATS headers
-- 4 Go-агента — каждый создаёт span на обработку задачи с атрибутами (task.id, user.id, score, result)
-- `orchestrator/tracer.py` — Python OTel инициализация
-- `orchestrator/orchestrator.py` — root span для pipeline + child spans для каждого шага, inject trace context в NATS headers
-- docker-compose.yml — Jaeger all-in-one (порты 4318 OTLP, 16686 UI)
+Добавлена распределённая трассировка через OpenTelemetry (OTLP) с визуализацией в Jaeger. Теперь каждый вызов агента порождает цепочку spans, которая видна в Jaeger UI как единый трейс.
 
-### Архитектура трейсинга
+---
 
+### 1. `shared/otel.go` — ядро трассировки для Go-агентов
+
+#### `InitTracer(serviceName string) (*sdktrace.TracerProvider, error)`
+
+Создаёт и настраивает TracerProvider для каждого Go-агента:
+
+1. Читает переменную окружения `OTEL_EXPORTER_OTLP_ENDPOINT` (по умолчанию `http://localhost:4318`)
+2. Создаёт **OTLP HTTP exporter** — отправляет spans на Jaeger Collector по протоколу OTLP
+3. Создаёт **Resource** с метаданными сервиса:
+   - `service.name` — имя агента (course-recommendation, assignment-check и т.д.)
+   - `service.version` — "1.0.0"
+   - `service.group` — "e-learning"
+4. Создаёт **TracerProvider** с:
+   - `BatchSpanProcessor` — экспорт spans пачками (не блокирует обработку)
+   - `AlwaysSample()` — семплинг 100% (для лабораторной)
+5. Устанавливает глобальный TracerProvider: `otel.SetTracerProvider(tp)`
+6. Устанавливает **TextMapPropagator** — W3C TraceContext + Baggage для передачи trace_id между сервисами через NATS headers
+7. Возвращает TracerProvider для последующего Shutdown
+
+#### `ShutdownTracer(tp *sdktrace.TracerProvider)`
+
+Завершает работу трейсера:
+
+1. Создаёт контекст с таймаутом 5 секунд
+2. Вызывает `tp.Shutdown(ctx)` — **flushet все оставшиеся spans** перед выходом
+3. Логирует ошибку, если shutdown не удался
+
+Вызывается в `defer` в каждом агенте: гарантирует, что ни один span не потеряется.
+
+#### `InjectTraceContext(ctx context.Context) map[string]string`
+
+**Инъекция** trace context в map для NATS headers:
+
+1. Создаёт `TraceCarrier` (реализует `TextMapCarrier` через `map[string]string`)
+2. Вызывает `otel.GetTextMapPropagator().Inject(ctx, carrier)` — записывает W3C `traceparent` в carrier
+3. Возвращает map для установки в NATS message headers
+
+Используется в агентах при отправке результата: каждый Go-агент при публикации ответа в `tasks.completed` проставляет `traceparent` header, чтобы оркестратор мог связать ответ с исходным запросом.
+
+#### `ExtractTraceContext(ctx context.Context, headers map[string]string) context.Context`
+
+**Извлечение** trace context из NATS headers:
+
+1. Создаёт `TraceCarrier` из полученных headers
+2. Вызывает `otel.GetTextMapPropagator().Extract(ctx, carrier)` — читает `traceparent`, восстанавливает span context
+3. Возвращает контекст с parent span'ом
+
+Используется в агентах при получении задачи: если входящее NATS-сообщение содержит `traceparent`, агент создаёт дочерний span от родительского, тем самым выстраивая единую цепочку вызовов.
+
+---
+
+### 2. Go-агенты — spans с атрибутами
+
+Каждый агент обёртывает обработку задачи в span. Пример (course-recommendation):
+
+```go
+// Извлечение trace context из заголовков NATS-сообщения
+headers := make(map[string]string)
+for k, v := range m.Header {
+    if len(v) > 0 {
+        headers[k] = v[0]
+    }
+}
+ctx := shared.ExtractTraceContext(context.Background(), headers)
+
+// Создание дочернего span
+ctx, span := shared.Tracer.Start(ctx, "course-recommendation.process",
+    trace.WithAttributes(
+        attribute.String("messaging.system", "nats"),
+        attribute.String("messaging.destination", m.Subject),
+    ),
+)
+defer span.End()
+
+// Добавление атрибутов по ходу обработки
+span.SetAttributes(
+    attribute.String("task.id", task.ID),
+    attribute.String("user.id", req.UserID),
+)
+
+// После обработки — результат
+span.SetAttributes(
+    attribute.Int("recommendations.count", len(output.Recommendations)),
+    attribute.String("top.course", output.Recommendations[0].Title),
+    attribute.Int("top.score", output.Recommendations[0].Score),
+)
+
+// Инъекция trace context в ответное сообщение
+msg := nats.NewMsg("tasks.completed")
+for k, v := range shared.InjectTraceContext(ctx) {
+    msg.Header.Set(k, v)
+}
+nc.PublishMsg(msg)
 ```
-Orchestrator (root span: pipeline.<id>)
-  ├─ step.course_recommend ──► course-recommendation.process
-  ├─ step.assignment_check ──► assignment-check.process
-  ├─ step.progress_analysis ──► progress-analysis.process
-  └─ step.certificate_generate ──► certificate-gen.process
-```
 
-Trace context передаётся через **NATS message headers** (W3C `traceparent`).
-
-### Атрибуты spans
+**Атрибуты spans по агентам:**
 
 | Агент | Атрибуты |
 |-------|----------|
-| CourseRec | `task.id`, `user.id`, `recommendations.count`, `top.course`, `top.score` |
-| AssignmentCheck | `task.id`, `assignment.id`, `assignment.type`, `assignment.passed`, `assignment.score` |
-| ProgressAnalysis | `task.id`, `progress.completion_pct`, `progress.avg_score`, `progress.trend` |
-| CertificateGen | `task.id`, `certificate.issued`, `certificate.id`, `certificate.grade` |
+| **CourseRec** | `task.id`, `user.id`, `recommendations.count`, `top.course`, `top.score` |
+| **AssignmentCheck** | `task.id`, `assignment.id`, `assignment.type`, `user.id`, `assignment.passed`, `assignment.score`, `assignment.max_score` |
+| **ProgressAnalysis** | `task.id`, `user.id`, `course.id`, `activity.entries`, `progress.completion_pct`, `progress.avg_score`, `progress.trend`, `progress.weak_topics` |
+| **CertificateGen** | `task.id`, `user.id`, `user.name`, `course.id`, `course.name`, `requirements_met`, `certificate.issued`, `certificate.id`, `certificate.grade` |
+
+---
+
+### 3. `orchestrator/tracer.py` — трассировка Python-оркестратора
+
+Функция `init_tracer()`:
+
+1. Читает `OTEL_EXPORTER_OTLP_ENDPOINT` (по умолчанию `http://localhost:4318`)
+2. Создаёт Resource с `service.name: "orchestrator"`
+3. Создаёт `OTLPSpanExporter` с endpoint `/v1/traces`
+4. Создаёт `TracerProvider` + `BatchSpanProcessor`
+5. Устанавливает глобальный провайдер через `trace.set_tracer_provider(provider)`
+6. Возвращает `tracer` для создания spans
+
+---
+
+### 4. `orchestrator/orchestrator.py` — spans в pipeline
+
+**`send_task()`** — теперь принимает `parent_ctx` и `step_name`:
+
+```python
+async def send_task(self, subject, payload, timeout=30,
+                    parent_ctx=None, step_name=""):
+    with self.tracer.start_as_current_span(
+        span_name, context=parent_ctx,
+        kind=SpanKind.PRODUCER,
+    ) as span:
+        span.set_attribute("task.id", task_id)
+        span.set_attribute("messaging.destination", subject)
+
+        # Инъекция trace context в NATS headers
+        headers = {}
+        inject(headers)  # из opentelemetry.propagate
+
+        await self.nc.publish(subject, data, headers=headers)
+        result = await asyncio.wait_for(future, timeout)
+        span.set_attribute("task.success", result.get("success", False))
+        return result
+```
+
+**`run_pipeline()`** — создаёт иерархию spans:
+
+```python
+# Root span для всего pipeline
+with self.tracer.start_as_current_span(
+    f"pipeline.{pipeline_id[:8]}",
+) as pipeline_span:
+    pipeline_span.set_attribute("pipeline.id", pipeline_id)
+    pipeline_span.set_attribute("user.id", user_data["user_id"])
+
+    # Контекст для дочерних span'ов
+    pipeline_ctx = trace.set_span_in_context(pipeline_span)
+
+    # Каждый шаг — дочерний span с parent_ctx=pipeline_ctx
+    r1 = await self.send_task("tasks.course.recommend", {...},
+                               parent_ctx=pipeline_ctx,
+                               step_name="step.course_recommend")
+    r2 = await self.send_task("tasks.assignment.check", {...},
+                               parent_ctx=pipeline_ctx,
+                               step_name="step.assignment_check")
+    # ...
+```
+
+**Итоговая иерархия в Jaeger:**
+
+```
+pipeline.39c8070e  (root — orchestrator)
+  ├── step.course_recommend  (child — orchestrator)
+  │     └── course-recommendation.process  (child — Go agent)
+  ├── step.assignment_check  (child — orchestrator)
+  │     └── assignment-check.process  (child — Go agent)
+  ├── step.progress_analysis  (child — orchestrator)
+  │     └── progress-analysis.process  (child — Go agent)
+  └── step.certificate_generate  (child — orchestrator)
+        └── certificate-gen.process  (child — Go agent)
+```
+
+Связь между orchestrator и Go-агентами реализована через **NATS message headers**: оркестратор при отправке задачи вызывает `inject(headers)` (записывает `traceparent` в заголовки NATS-сообщения), а Go-агент при получении вызывает `shared.ExtractTraceContext()` (читает `traceparent` и создаёт дочерний span).
+
+---
+
+### 5. docker-compose.yml — Jaeger
+
+Добавлен сервис `jaeger`:
+
+```yaml
+jaeger:
+  image: jaegertracing/all-in-one:latest
+  ports:
+    - "16686:16686"   # Jaeger UI (браузер)
+    - "4318:4318"     # OTLP HTTP (приём spans)
+    - "4317:4317"     # OTLP gRPC (альтернатива)
+  environment:
+    - COLLECTOR_OTLP_ENABLED=true
+```
+
+В каждый агент добавлена переменная `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` для отправки spans через Docker network.
+
+---
 
 ### Как запустить
 

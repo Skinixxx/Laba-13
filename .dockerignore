@@ -1,0 +1,12 @@
+.git/
+.gitignore
+*.md
+venv/
+__pycache__/
+*.pyc
+.vscode/
+*.pdf
+*.log
+PROMPT_LOG_EXAMPLE.md
+orchestrator/venv/
+Лабораторная работа №13.pdf
