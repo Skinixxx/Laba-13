@@ -134,10 +134,10 @@ class AgentOrchestrator:
             pipeline_span.set_attribute("recommended.course", top_course["title"])
             logger.info(f"  Selected: {top_course['title']} (score: {top_course['score']})")
 
-            # --- Step 2: Assignment Check ---
-            logger.info("--- Step 2/4: Assignment Check ---")
-            r2 = await self.send_task(
-                "tasks.assignment.check", {
+            # --- Step 2: Assignment Check (через аукцион) ---
+            logger.info("--- Step 2/4: Assignment Check (auction) ---")
+            r2 = await self.run_auction(
+                "tasks.auction.check", {
                     "assignment_id": user_data["assignment_id"],
                     "user_id": user_data["user_id"],
                     "course_id": top_course["course_id"],
@@ -146,6 +146,7 @@ class AgentOrchestrator:
                 },
                 parent_ctx=pipeline_ctx,
                 step_name="step.assignment_check",
+                auction_timeout=0.5,
             )
             check_out = json.loads(r2["output"])
             pipeline_span.set_attribute("assignment.passed", check_out["passed"])
@@ -231,6 +232,68 @@ class AgentOrchestrator:
         logger.info("=" * 60)
         return result
 
+    async def run_auction(
+        self, subject: str, task_payload: dict, timeout: int = 30,
+        parent_ctx: Optional[object] = None,
+        step_name: str = "",
+        auction_timeout: float = 0.5,
+    ) -> dict:
+        auction_id = str(uuid.uuid4())
+        bid_subject = f"tasks.auction.bid.{auction_id}"
+
+        bids = []
+
+        async def on_bid(msg):
+            try:
+                bid = json.loads(msg.data.decode())
+                bids.append(bid)
+            except json.JSONDecodeError:
+                pass
+
+        sub = await self.nc.subscribe(bid_subject, cb=on_bid)
+        auction_payload = {"auction_id": auction_id}
+        if "assignment_type" in task_payload:
+            auction_payload["assignment_type"] = task_payload["assignment_type"]
+        await self.nc.publish(
+            subject,
+            json.dumps(auction_payload).encode(),
+        )
+
+        await asyncio.sleep(auction_timeout)
+
+        try:
+            await sub.unsubscribe()
+        except Exception:
+            pass
+
+        if not bids:
+            logger.error(f"Auction {auction_id[:8]}: no bids received")
+            return await self.send_task(
+                "tasks.assignment.check", task_payload,
+                timeout, parent_ctx, step_name,
+            )
+
+        winner = min(bids, key=lambda b: b["score"])
+        winner_spec = winner.get("specialization", "?")
+        winner_match = winner.get("match_bonus", 0)
+        logger.info(
+            f"Auction {auction_id[:8]}: {len(bids)} bids, "
+            f"winner={winner['agent_id']} score={winner['score']:.2f} "
+            f"cpu={winner.get('cpu_load', '?'):.2f} tasks={winner.get('tasks_processed', '?')} "
+            f"spec={winner_spec} match={winner_match:.1f}"
+        )
+        for bid in sorted(bids, key=lambda b: b["score"]):
+            logger.info(
+                f"  bidder={bid['agent_id']} score={bid['score']:.2f} "
+                f"spec={bid.get('specialization', '?')} match={bid.get('match_bonus', 0):.1f}"
+            )
+
+        direct_subject = f"tasks.assignment.check.direct.{winner['agent_id']}"
+        return await self.send_task(
+            direct_subject, task_payload,
+            timeout, parent_ctx, step_name,
+        )
+
     async def close(self):
         if self.nc:
             await self.nc.drain()
@@ -273,11 +336,11 @@ async def test_individual(orchestrator):
         except Exception as e:
             logger.error(f"Course Recommendation failed: {e}")
 
-        # --- Test 2: Assignment Check ---
-        logger.info("\n--- Test 2: Assignment Check ---")
+        # --- Test 2: Assignment Check (через аукцион) ---
+        logger.info("\n--- Test 2: Assignment Check (auction) ---")
         try:
-            result = await orchestrator.send_task(
-                "tasks.assignment.check", {
+            result = await orchestrator.run_auction(
+                "tasks.auction.check", {
                     "assignment_id": "a-042",
                     "user_id": "u-001",
                     "course_id": "c-005",
