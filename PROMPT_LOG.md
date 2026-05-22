@@ -307,3 +307,80 @@ Competition                 Consistent (5 bids/auction)
 ```
 
 **Вывод:** Аукцион стабильно выбирает агента с наилучшим соответствием (по специализации) и минимальной загрузкой. При 5+ подах с вероятностью >99% представлены все 3 специализации, и каждый тип задания гарантированно получает подходящего обработчика.
+
+---
+
+## Задание 7 — Интеграция LLM-агента (Ollama)
+
+**Промпт:** Предлагаю план для Task 7 — LLM-агент для генерации персонализированных отзывов.
+
+**Результат:**
+
+### Назначение
+Python-агент `llm-feedback`, который генерирует развёрнутые отзывы для студентов на русском языке на основе результатов проверки заданий.
+
+### Архитектура
+
+```
+agents/llm-feedback/
+├── main.py               # NATS-агент: подписка tasks.feedback.generate
+├── llm_client.py         # HTTP-клиент для Ollama API (резерв)
+├── fallback.py           # Rule-based генератор отзывов (без LLM)
+├── prompt_templates.py   # Шаблоны промптов для LLM
+├── requirements.txt      # nats-py, opentelemetry
+└── Dockerfile            # python:3.12-slim
+```
+
+### Режимы работы
+
+| Режим | Условие | Источник |
+|-------|---------|----------|
+| **Ollama** | `OLLAMA_URL` задан и Ollama доступен | LLM (локальная модель) |
+| **Fallback** | `OLLAMA_URL` пуст / Ollama недоступен | Rule-based шаблоны |
+
+Fallback-генератор учитывает:
+- Тип задания (test/essay/code) и его специфику
+- Тренд успеваемости (improving/declining/stable)
+- Процент выполнения
+- Интересы студента
+
+### Интеграция
+
+| Компонент | Изменения |
+|-----------|-----------|
+| `docker-compose.yml` | Новый сервис `llm-feedback` |
+| `orchestrator.py` | Test 5 (individual) + Step 5 (pipeline) |
+| NATS | Новый канал `tasks.feedback.generate` |
+
+### Pipeline (5 шагов)
+
+```
+CourseRec → AssignmentCheck (аукцион) → ProgressAnalysis → CertificateGen → LLM Feedback
+```
+
+### Результаты тестирования
+
+**Test 5 (individual):**
+```
+Feedback generated (449 chars)
+  First 200 chars: 📋 Отзыв для Иван Иванов
+  Курс: ML with Python | Задание: test
+  Результат: 100/100 (100%) — ПРОЙДЕНО
+  ...
+```
+
+**Pipeline Step 5:**
+```
+Feedback generated (518 chars)
+  Preview: 📋 Отзыв для Иван Иванов
+  Курс: Машинное обучение с Python | Задание: essay
+  ...
+```
+
+### Code Review
+
+| # | Баг | Фикс |
+|---|-----|------|
+| 1 | 🔴 `nats.Msg()` не существует в nats-py | Заменено на `nc.publish(subject, data, headers=headers)` |
+| 2 | 🟡 `host.docker.internal` не резолвится на Linux | `OLLAMA_URL` пуст по умолчанию → пропуск проверки Ollama |
+| 3 | 🟡 Таймаут 30s при недоступном Ollama | Проверка `is_available()` только при `OLLAMA_URL != ""` |

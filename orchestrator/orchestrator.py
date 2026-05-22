@@ -218,6 +218,38 @@ class AgentOrchestrator:
                 pipeline_span.set_attribute("certificate.issued", False)
                 logger.warning("  Certificate not issued — requirements not met")
 
+            # --- Step 5: LLM Feedback ---
+            logger.info("--- Step 5/5: LLM Feedback ---")
+            try:
+                r5 = await self.send_task(
+                    "tasks.feedback.generate", {
+                        "user_id": user_data["user_id"],
+                        "user_name": user_data["user_name"],
+                        "skill_level": user_data["profile"]["skill_level"],
+                        "interests": user_data["profile"]["interests"],
+                        "course_name": top_course["title"],
+                        "assignment_type": user_data["assignment_type"],
+                        "score": check_out["score"],
+                        "max_score": check_out["max_score"],
+                        "passed": check_out["passed"],
+                        "trend": prog_out["trend"],
+                        "avg_score": prog_out["avg_score"],
+                        "essay_text": user_data.get("answer", {}).get("essay", ""),
+                        "word_count": len(user_data.get("answer", {}).get("essay", "").split()),
+                        "keywords": "функция, аргумент, возврат, рекурсия",
+                    },
+                    parent_ctx=pipeline_ctx,
+                    step_name="step.llm_feedback",
+                    timeout=15,
+                )
+                feedback_out = json.loads(r5["output"])
+                pipeline_span.set_attribute("feedback.length", len(feedback_out["feedback"]))
+                logger.info(f"  Feedback generated ({len(feedback_out['feedback'])} chars)")
+                logger.info(f"  Preview: {feedback_out['feedback'][:150]}...")
+            except Exception as e:
+                logger.warning(f"  LLM Feedback skipped: {e}")
+                feedback_out = None
+
         result = {
             "pipeline_id": pipeline_id,
             "user_id": user_data["user_id"],
@@ -225,6 +257,7 @@ class AgentOrchestrator:
             "assignment_check": check_out,
             "progress_analysis": prog_out,
             "certificate": cert_out,
+            "feedback": feedback_out["feedback"] if feedback_out else None,
         }
 
         logger.info("=" * 60)
@@ -413,6 +446,36 @@ async def test_individual(orchestrator):
         except Exception as e:
             logger.error(f"Certificate Generation failed: {e}")
 
+        # --- Test 5: LLM Feedback ---
+        logger.info("\n--- Test 5: LLM Feedback ---")
+        try:
+            result = await orchestrator.send_task(
+                "tasks.feedback.generate", {
+                    "user_id": "u-001",
+                    "user_name": "Иван Иванов",
+                    "skill_level": "intermediate",
+                    "interests": ["python", "machine learning"],
+                    "course_name": "ML with Python",
+                    "assignment_type": "test",
+                    "score": 100,
+                    "max_score": 100,
+                    "passed": True,
+                    "trend": "improving",
+                    "avg_score": 92.5,
+                    "total_questions": 5,
+                    "correct": 5,
+                    "wrong_questions": "",
+                },
+                timeout=15, parent_ctx=ctx,
+                step_name="individual.llm_feedback",
+            )
+            output = json.loads(result["output"])
+            feedback = output["feedback"]
+            logger.info(f"Feedback generated ({len(feedback)} chars)")
+            logger.info(f"  First 200 chars: {feedback[:200]}...")
+        except Exception as e:
+            logger.error(f"LLM Feedback failed: {e}")
+
 
 async def test_pipeline(orchestrator):
     logger.info("\n" + "=" * 60)
@@ -464,6 +527,9 @@ async def test_pipeline(orchestrator):
             logger.info(f"  Certificate: {cert['certificate_id']} (grade: {cert['grade']})")
         else:
             logger.info("  Certificate: NOT ISSUED")
+        feedback_text = result.get("feedback")
+        if feedback_text:
+            logger.info(f"  LLM Feedback: {len(feedback_text)} chars generated")
     except Exception as e:
         logger.error(f"Pipeline failed: {e}", exc_info=True)
 
