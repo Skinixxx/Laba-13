@@ -84,7 +84,6 @@ func main() {
 		if err := json.Unmarshal(m.Data, &task); err != nil {
 			log.Printf("Failed to unmarshal task: %v", err)
 			span.RecordError(err)
-			publishError(ctx, nc, "", "failed to unmarshal task: "+err.Error())
 			return
 		}
 		span.SetAttributes(

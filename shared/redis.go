@@ -10,8 +10,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const DefaultRedisAddr = "localhost:6379"
-
 type ProgressState struct {
 	TasksProcessed  int     `json:"tasks_processed"`
 	TotalCompletion float64 `json:"total_completion"`

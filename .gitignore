@@ -9,4 +9,4 @@ __pycache__/
 
 *.pdf
 PROMPT_LOG_EXAMPLE.md
-/.vscode
+.vscode/

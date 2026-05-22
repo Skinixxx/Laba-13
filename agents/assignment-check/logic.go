@@ -76,6 +76,12 @@ func checkTest(req shared.AssignmentRequest, meta assignmentMeta, output *shared
 		}
 	}
 
+	if total == 0 {
+		output.Score = 0
+		output.Passed = false
+		output.Feedback = "Нет тестов для проверки"
+		return
+	}
 	output.Score = (correct * output.MaxScore) / total
 	output.Passed = output.Score >= 80
 

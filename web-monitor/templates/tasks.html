@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %} — Tasks{% endblock %}
+{% block content %}
+<h1>Task History</h1>
+<table>
+    <tr><th>ID</th><th>Status</th><th>Error</th><th>Output Preview</th><th>Time</th></tr>
+    {% for t in tasks %}
+    <tr>
+        <td class="mono">{{ t.id }}</td>
+        <td>{% if t.success %}<span class="badge badge-success">OK</span>{% else %}<span class="badge badge-danger">FAIL</span>{% endif %}</td>
+        <td>{% if t.error %}<span class="badge badge-warning">{{ t.error[:50] }}</span>{% else %}—{% endif %}</td>
+        <td class="mono" style="max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            {% if t.output %}{{ t.output | tojson | truncate(80) }}{% else %}—{% endif %}
+        </td>
+        <td>{{ t.timestamp[11:19] }}</td>
+    </tr>
+    {% endfor %}
+    {% if not tasks %}
+    <tr><td colspan="5" style="color: #64748b; padding: 2rem; text-align: center;">No tasks recorded yet</td></tr>
+    {% endif %}
+</table>
+{% endblock %}

@@ -73,6 +73,7 @@ ollama_available = False
 
 
 def build_prompt(data: dict) -> tuple[str, str]:
+    passed_status = "ПРОЙДЕНО" if data.get("passed", False) else "НЕ ПРОЙДЕНО"
     system = SYSTEM_PROMPT.format(
         user_name=data.get("user_name", "Студент"),
         skill_level=data.get("skill_level", "средний"),
@@ -81,7 +82,7 @@ def build_prompt(data: dict) -> tuple[str, str]:
         assignment_type=data.get("assignment_type", "unknown"),
         score=data.get("score", 0),
         max_score=data.get("max_score", 100),
-        passed=data.get("passed", False),
+        passed_status=passed_status,
         trend=data.get("trend", "stable"),
         avg_score=data.get("avg_score", 0),
     )

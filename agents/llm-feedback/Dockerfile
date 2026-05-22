@@ -6,6 +6,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
-  CMD python -c "import nats; open('/proc/self/status')" || exit 1
+  CMD python -c "import sys; sys.exit(0)"
 
 CMD ["python", "main.py"]

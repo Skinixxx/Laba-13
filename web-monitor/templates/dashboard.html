@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %} — Dashboard{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<div class="cards">
+    <div class="card"><div class="value">{{ online_agents }}</div><div class="label">Agents Online</div></div>
+    <div class="card"><div class="value">{{ total_tasks }}</div><div class="label">Total Tasks</div></div>
+    <div class="card"><div class="value">{{ failed_tasks }}</div><div class="label">Failed Tasks</div></div>
+    <div class="card"><div class="value">{{ success_rate }}%</div><div class="label">Success Rate</div></div>
+</div>
+
+<div class="grid-2">
+    <div>
+        <h2>Recent Tasks</h2>
+        <table>
+            <tr><th>ID</th><th>Status</th><th>Time</th></tr>
+            {% for t in recent %}
+            <tr>
+                <td class="mono">{{ t.id }}</td>
+                <td>{% if t.success %}<span class="badge badge-success">OK</span>{% else %}<span class="badge badge-danger">FAIL</span>{% endif %}</td>
+                <td>{{ t.timestamp[11:19] }}</td>
+            </tr>
+            {% endfor %}
+            {% if not recent %}
+            <tr><td colspan="3" style="color: #64748b;">No tasks yet</td></tr>
+            {% endif %}
+        </table>
+    </div>
+    <div>
+        <h2>Agent Activity</h2>
+        <table>
+            <tr><th>Agent</th><th>Tasks</th><th>Spec</th><th>Last Seen</th></tr>
+            {% for a in agent_stats %}
+            <tr>
+                <td class="mono">{{ a.id }}</td>
+                <td>{{ a.tasks }}</td>
+                <td><span class="badge badge-info">{{ a.spec }}</span></td>
+                <td>{{ a.last_seen }}</td>
+            </tr>
+            {% endfor %}
+            {% if not agent_stats %}
+            <tr><td colspan="4" style="color: #64748b;">Waiting for agents...</td></tr>
+            {% endif %}
+        </table>
+    </div>
+</div>
+{% endblock %}

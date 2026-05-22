@@ -90,3 +90,18 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
       - OLLAMA_URL=
       - OLLAMA_MODEL=tinyllama
+
+  web-monitor:
+    build:
+      context: web-monitor
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8090:8000"
+    depends_on:
+      - nats
+    environment:
+      - NATS_URL=nats://nats:4222
+      - NATS_MON_URL=http://nats:8222
+    volumes:
+      - ~/.kube/config:/root/.kube/config:ro

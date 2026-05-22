@@ -130,6 +130,8 @@ class AgentOrchestrator:
                 step_name="step.course_recommend",
             )
             rec_out = json.loads(r1["output"])
+            if not rec_out.get("recommendations"):
+                raise ValueError("No recommendations returned from course agent")
             top_course = rec_out["recommendations"][0]
             pipeline_span.set_attribute("recommended.course", top_course["title"])
             logger.info(f"  Selected: {top_course['title']} (score: {top_course['score']})")

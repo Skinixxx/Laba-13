@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Learning Monitor{% block title %}{% endblock %}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a; color: #e2e8f0; min-height: 100vh;
+        }
+        nav {
+            background: #1e293b; padding: 1rem 2rem;
+            display: flex; gap: 1.5rem; align-items: center;
+            border-bottom: 1px solid #334155;
+        }
+        nav a {
+            color: #94a3b8; text-decoration: none; font-size: 0.95rem;
+            padding: 0.5rem 1rem; border-radius: 6px; transition: all 0.2s;
+        }
+        nav a:hover, nav a.active { color: #38bdf8; background: #0f172a; }
+        nav .brand { color: #38bdf8; font-weight: 700; font-size: 1.1rem; margin-right: 1rem; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+        .card {
+            background: #1e293b; border: 1px solid #334155; border-radius: 10px;
+            padding: 1.5rem; transition: border-color 0.2s;
+        }
+        .card:hover { border-color: #38bdf8; }
+        .card .value { font-size: 2rem; font-weight: 700; color: #38bdf8; }
+        .card .label { font-size: 0.85rem; color: #64748b; margin-top: 0.3rem; }
+        table {
+            width: 100%; border-collapse: collapse; margin: 1rem 0;
+            background: #1e293b; border-radius: 10px; overflow: hidden;
+        }
+        th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid #334155; }
+        th { background: #0f172a; color: #38bdf8; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; }
+        tr:hover { background: #334155; }
+        .badge {
+            display: inline-block; padding: 0.2rem 0.6rem; border-radius: 12px;
+            font-size: 0.75rem; font-weight: 600;
+        }
+        .badge-success { background: #065f46; color: #6ee7b7; }
+        .badge-danger { background: #7f1d1d; color: #fca5a5; }
+        .badge-warning { background: #78350f; color: #fcd34d; }
+        .badge-info { background: #1e3a5f; color: #7dd3fc; }
+        form { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 2rem; }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; margin-bottom: 0.4rem; color: #94a3b8; font-size: 0.9rem; }
+        input, select, textarea {
+            width: 100%; padding: 0.6rem; border-radius: 6px; border: 1px solid #334155;
+            background: #0f172a; color: #e2e8f0; font-size: 0.9rem;
+        }
+        button {
+            background: #38bdf8; color: #0f172a; border: none; padding: 0.7rem 1.5rem;
+            border-radius: 6px; font-weight: 600; cursor: pointer; transition: opacity 0.2s;
+        }
+        button:hover { opacity: 0.9; }
+        .alert-success { background: #065f46; color: #6ee7b7; padding: 1rem; border-radius: 6px; margin-bottom: 1rem; }
+        .alert-error { background: #7f1d1d; color: #fca5a5; padding: 1rem; border-radius: 6px; margin-bottom: 1rem; }
+        .mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.85rem; }
+        h1 { margin-bottom: 1rem; color: #f1f5f9; }
+        h2 { margin: 1.5rem 0 1rem; color: #cbd5e1; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    </style>
+</head>
+<body>
+    <nav>
+        <span class="brand">🎓 E-Learning</span>
+        <a href="/" class="{% if page == 'dashboard' %}active{% endif %}">Dashboard</a>
+        <a href="/tasks" class="{% if page == 'tasks' %}active{% endif %}">Tasks</a>
+        <a href="/agents" class="{% if page == 'agents' %}active{% endif %}">Agents</a>
+        <a href="/k8s" class="{% if page == 'k8s' %}active{% endif %}">K8s</a>
+        <a href="/run" class="{% if page == 'run' %}active{% endif %}">Run</a>
+    </nav>
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

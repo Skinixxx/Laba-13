@@ -64,11 +64,9 @@ func recommendCourses(req shared.RecommendationRequest) shared.RecommendationOut
 				if strings.Contains(strings.ToLower(tag), interest) || strings.Contains(interest, strings.ToLower(tag)) {
 					matchScore += 40
 					reasons = append(reasons, "Совпадает с вашими интересами")
-					goto interestDone
 				}
 			}
 		}
-	interestDone:
 
 		courseLevel := levelOrder[c.Level]
 		levelDiff := courseLevel - userLevel

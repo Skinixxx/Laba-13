@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %} — Agents{% endblock %}
+{% block content %}
+<h1>Agent Details</h1>
+<table>
+    <tr>
+        <th>Agent ID</th><th>Specialization</th><th>Tasks</th>
+        <th>CPU Load</th><th>Uptime (s)</th><th>Goroutines</th><th>Last Seen</th>
+    </tr>
+    {% for a in agents %}
+    <tr>
+        <td class="mono" title="{{ a.id }}">{{ a.id_short }}</td>
+        <td><span class="badge badge-info">{{ a.spec }}</span></td>
+        <td>{{ a.tasks }}</td>
+        <td>{{ a.cpu_load }}</td>
+        <td>{{ a.uptime }}</td>
+        <td>{{ a.goroutines }}</td>
+        <td>{{ a.last_seen }}</td>
+    </tr>
+    {% endfor %}
+    {% if not agents %}
+    <tr><td colspan="7" style="color: #64748b; padding: 2rem; text-align: center;">No agent data — wait for auction bids</td></tr>
+    {% endif %}
+</table>
+{% endblock %}
