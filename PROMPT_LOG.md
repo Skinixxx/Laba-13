@@ -174,3 +174,35 @@ progress-analysis | State saved [agent:progress-analysis:state]: 4 tasks process
 | 5 | 🟡 Race condition в `updateState` (параллельные задачи перезаписывают состояние) | `sync.Mutex` в progress-analysis |
 | — | Python лог в CWD, не рядом со скриптом | `Path(__file__).parent / "logs"` |
 | — | Redis timeout 5s → 6s | ReadTimeout/WriteTimeout + контекст |
+
+---
+
+## Задание 5 — Динамическое масштабирование
+
+**Промпт:** Варианты: kind (K8s в Docker) или Docker API. Расскажи про kind. Решили делать через kind с extraPortMappings.
+
+**Результат:** Реализован HPA через kind (Kubernetes in Docker).
+
+**Что сделано:**
+
+| Шаг | Действие | Результат |
+|-----|----------|-----------|
+| 1 | Установлены kind v0.31.0 + kubectl v1.32.0 | ✅ |
+| 2 | `kind create cluster --name laba13` | K8s кластер v1.35.0, 1 control-plane нода |
+| 3 | Собран образ `assignment-check:scalable`, загружен в kind | ✅ |
+| 4 | `kubectl apply -f k8s/deployment.yaml` | Pod assignment-checker запущен, подключился к NATS |
+| 5 | Установлен metrics-server (с `--kubelet-insecure-tls`) | Сбор метрик CPU работает |
+| 6 | `kubectl apply -f k8s/hpa.yaml` | HPA: min 1, max 5, target 50% CPU |
+| 7 | Генерация CPU нагрузки → HPA scale up | **1 → 5 подов** за 30 секунд |
+
+**Логи HPA:**
+```
+NAME                     TARGETS      REPLICAS
+assignment-checker-hpa   cpu: 1%/50%     1
+assignment-checker-hpa   cpu: 99%/50%    1   ← CPU превысил target
+assignment-checker-hpa   cpu: 99%/50%    2   ← HPA создал 2-ю реплику
+assignment-checker-hpa   cpu: 501%/50%   4   ← масштабирование
+assignment-checker-hpa   cpu: 125%/50%   5   ← maxReplicas=5 достигнут
+```
+
+**Сеть:** kind bridge (шлюз `172.23.0.1`) → поды видят NATS на хосте через `nats://172.23.0.1:4222`

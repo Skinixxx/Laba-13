@@ -5,20 +5,25 @@
 ## Быстрый старт
 
 ```bash
-# 1. Запустить NATS + Redis
-docker compose up -d nats redis
+# 1. Запустить NATS + Redis + Jaeger
+docker compose up -d nats redis jaeger
 
-# 2. Запустить 4 Go-агента
+# 2. Запустить 3 Go-агента (кроме assignment-check — он в K8s)
 cd agents/course-recommendation && go run . &
-cd agents/assignment-check && go run . &
 cd agents/progress-analysis && go run . &
 cd agents/certificate-gen && go run . &
 
-# 3. Запустить оркестратор (тесты + pipeline)
+# 3. Запустить assignment-checker в Kubernetes (kind)
+kind create cluster --name laba13
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/hpa.yaml
+
+# 4. Запустить оркестратор (тесты + pipeline)
 cd orchestrator && source venv/bin/activate && python3 orchestrator.py
 
-# 4. Остановить
+# 5. Остановить
 docker compose down
+kind delete cluster --name laba13
 ```
 
 ## Агенты
@@ -36,7 +41,7 @@ docker compose down
 2. Цепочки задач (pipeline) ✅
 3. Распределённая трассировка (Jaeger + OpenTelemetry) ✅
 4. Агент с состоянием (Redis) ✅
-5. Динамическое масштабирование
+5. Динамическое масштабирование ✅
 6. Аукционное распределение задач
 7. Интеграция LLM-агента (Ollama)
 8. Веб-интерфейс для мониторинга
@@ -644,6 +649,12 @@ docker stop nats jaeger && docker rm nats jaeger
 - [x] 4.3. Progress Analysis Agent — загружает состояние при старте, сохраняет после каждой задачи
 - [x] 4.4. Состояние переживает перезапуск контейнера
 
+**Задание 5 — выполнено:**
+- [x] 5.1. Установлены kind + kubectl, создан K8s-кластер
+- [x] 5.2. Образ assignment-check собран и загружен в kind
+- [x] 5.3. Создан Deployment + HPA манифесты
+- [x] 5.4. HPA масштабирует с 1 до 5 подов при CPU > 50%
+
 ## Задание 4: Агент с состоянием (Redis)
 
 ### План
@@ -808,3 +819,182 @@ progress-analysis | State saved [agent:progress-analysis:state]: 4 tasks process
 - **No single point of failure:** Redis healthcheck гарантирует порядок запуска, но при недоступности Redis агент продолжает работать без сохранения состояния
 - **Goroutine-safe:** сохранение в горутине не блокирует обработку следующей задачи
 - **Минимальное изменение архитектуры:** добавлен только `shared/redis.go` и ~30 строк в main.go агента
+
+---
+
+## Задание 5: Динамическое масштабирование (kind + HPA)
+
+### План
+
+**Цель:** Автоматически запускать дополнительные экземпляры агента при высокой нагрузке. Использован **kind** (Kubernetes in Docker) для создания локального K8s-кластера и **HPA** (HorizontalPodAutoscaler) для автоматического скейлинга.
+
+**Выбранный агент для скейлинга:** `assignment-check` — stateless, можно безопасно запускать N копий.
+
+### Архитектура
+
+```
+Host (Docker)
+├── docker-compose: nats, redis, jaeger, course-recommendation, progress-analysis, certificate-gen
+├── kind cluster "laba13"
+│   └── laba13-control-plane (Docker-контейнер = K8s-нода)
+│       ├── Pod: assignment-checker-xxx (replica 1)
+│       ├── Pod: assignment-checker-xxx (replica 2)
+│       ├── Pod: assignment-checker-xxx (replica 3)
+│       └── metrics-server (для HPA)
+└── orchestrator (на хосте, шлёт задачи в NATS)
+```
+
+**Сеть:** kind-контейнеры подключены к Docker-сети `kind` (bridge, шлюз `172.23.0.1`). NATS доступен подам по `nats://172.23.0.1:4222`.
+
+### 1. Установка kind и kubectl
+
+```bash
+# kind — бинарник 10MB
+curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
+chmod +x /tmp/kind && mv /tmp/kind ~/.local/bin/kind
+
+# kubectl
+curl -Lo /tmp/kubectl "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl"
+chmod +x /tmp/kubectl && mv /tmp/kubectl ~/.local/bin/kubectl
+```
+
+### 2. Создание кластера
+
+```bash
+kind create cluster --name laba13
+```
+
+Команда создаёт 1 control-plane ноду как Docker-контейнер `laba13-control-plane`. Внутри: kubelet, kube-apiserver, etcd, CNI (kindnet).
+
+### 3. Сборка образа и загрузка в kind
+
+```bash
+docker build -t assignment-check:scalable -f agents/assignment-check/Dockerfile .
+kind load docker-image assignment-check:scalable --name laba13
+```
+
+`kind load docker-image` экспортирует образ из локального Docker daemon и импортирует в containerd на ноде кластера.
+
+### 4. `k8s/deployment.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assignment-checker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: assignment-checker
+  template:
+    metadata:
+      labels:
+        app: assignment-checker
+    spec:
+      containers:
+      - name: agent
+        image: assignment-check:scalable
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NATS_URL
+          value: nats://172.23.0.1:4222   # шлюз сети kind
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://172.23.0.1:4318    # Jaeger на хосте
+        resources:
+          requests:
+            cpu: 100m
+            memory: 32Mi
+          limits:
+            cpu: 500m
+            memory: 64Mi
+```
+
+### 5. `k8s/hpa.yaml` — HorizontalPodAutoscaler
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: assignment-checker-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: assignment-checker
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+```
+
+При CPU > 50% HPA создаёт новые поды (до 5). При снижении нагрузки — удаляет лишние.
+
+### 6. Metrics Server
+
+Для сбора метрик CPU в kind требуется metrics-server:
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl patch deployment metrics-server -n kube-system \
+  --type='json' \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+```
+
+Патч `--kubelet-insecure-tls` необходим, потому что kind использует самоподписанные сертификаты kubelet.
+
+### 7. Тестирование HPA
+
+**Шаг 1:** Проверка, что под подключился к NATS
+
+```
+$ kubectl logs deployment/assignment-checker
+Assignment Check Agent connected to NATS at nats://172.23.0.1:4222
+Assignment Check Agent ready. Waiting for tasks...
+```
+
+**Шаг 2:** Запуск оркестратора — под обрабатывает задания
+
+```
+Test 2: Assignment Check ---
+Assignment a-042: PASSED (100/100)
+--- Step 2/4: Assignment Check ---
+Result: PASSED (80/100)
+```
+
+**Шаг 3:** Генерация CPU-нагрузки в поде
+
+```bash
+kubectl exec deployment/assignment-checker -- sh -c "cat /dev/urandom | gzip -9 > /dev/null" &
+```
+
+**Шаг 4:** Наблюдение за HPA
+
+```
+kubectl get hpa -w
+NAME                     TARGETS    MINPODS   MAXPODS   REPLICAS
+assignment-checker-hpa   cpu: 1%/50%   1         5         1
+assignment-checker-hpa   cpu: 99%/50%   1         5         1    ← CPU превысил target
+assignment-checker-hpa   cpu: 99%/50%   1         5         2    ← HPA создал 2-ю реплику
+assignment-checker-hpa   cpu: 501%/50%   1         5         4    ← масштабирование продолжается
+assignment-checker-hpa   cpu: 125%/50%   1         5         5    ← достигнут maxReplicas
+```
+
+**Результат:** 1 → 5 подов за ~30 секунд.
+
+### 8. Итог
+
+| Компонент | Описание |
+|-----------|----------|
+| **kind** | K8s-кластер в Docker, 1 нода, K8s v1.35.0 |
+| **Deployment** | assignment-checker с лимитами CPU 100m–500m |
+| **HPA** | target 50%, min 1, max 5, масштабирует по CPU |
+| **Metrics Server** | сбор метрик с kubelet (с флагом --kubelet-insecure-tls) |
+| **Сеть** | kind bridge (172.23.0.1) → NATS на хосте (172.23.0.1:4222) |
+
+**Вывод:** система динамического масштабирования реализована. При превышении порога CPU (50%) HPA автоматически увеличивает количество реплик assignment-checker с 1 до 5. При снижении нагрузки — масштабирует обратно (с задержкой стабилизации 5 минут по умолчанию).

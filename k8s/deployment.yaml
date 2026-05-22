@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assignment-checker
+  labels:
+    app: assignment-checker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: assignment-checker
+  template:
+    metadata:
+      labels:
+        app: assignment-checker
+    spec:
+      containers:
+      - name: agent
+        image: assignment-check:scalable
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NATS_URL
+          value: nats://172.23.0.1:4222
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://172.23.0.1:4318
+        resources:
+          requests:
+            cpu: 100m
+            memory: 32Mi
+          limits:
+            cpu: 500m
+            memory: 64Mi
