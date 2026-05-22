@@ -2,6 +2,25 @@
 
 **Вариант 23:** Система e-learning (Повышенный)
 
+## Быстрый старт
+
+```bash
+# 1. Запустить NATS
+docker run -d --name nats -p 4222:4222 nats:latest
+
+# 2. Запустить 4 Go-агента
+cd agents/course-recommendation && go run . &
+cd agents/assignment-check && go run . &
+cd agents/progress-analysis && go run . &
+cd agents/certificate-gen && go run . &
+
+# 3. Запустить оркестратор (тесты + pipeline)
+cd orchestrator && source venv/bin/activate && python3 orchestrator.py
+
+# 4. Остановить
+docker stop nats && docker rm nats
+```
+
 ## Агенты
 
 | Агент | Роль | Вход | Выход |
@@ -13,8 +32,8 @@
 
 ## Список заданий (повышенный уровень)
 
-1. Разработка полной системы из 3–5 агентов на Go ← **текущее**
-2. Цепочки задач (pipeline)
+1. Разработка полной системы из 3–5 агентов на Go ✅
+2. Цепочки задач (pipeline) ✅
 3. Распределённая трассировка (Jaeger + OpenTelemetry)
 4. Агент с состоянием (Redis)
 5. Динамическое масштабирование
@@ -351,8 +370,50 @@ sequenceDiagram
 - [x] 1.7. Создать docker-compose.yml c NATS
 - [x] 1.8. Протестировать взаимодействие всех компонентов
 
+### Как запустить (Задание 1)
+
+```bash
+# 1. NATS
+docker run -d --name nats -p 4222:4222 nats:latest
+
+# 2. Агенты (4 терминала или фон)
+cd agents/course-recommendation && go run . &
+cd agents/assignment-check && go run . &
+cd agents/progress-analysis && go run . &
+cd agents/certificate-gen && go run . &
+
+# 3. Оркестратор (индивидуальные тесты)
+cd orchestrator && source venv/bin/activate && python3 orchestrator.py
+
+# 4. Очистка
+docker stop nats && docker rm nats
+```
+
 **Задание 2 — выполнено:**
 - [x] 2.1. Реализовать `run_pipeline()` в оркестраторе
 - [x] 2.2. Chain: CourseRec → AssignmentCheck → ProgressAnalysis → CertificateGen
 - [x] 2.3. Сквозной pipeline_id для трассировки
 - [x] 2.4. Условная генерация сертификата (passed + completion >= 80%)
+
+### Как запустить (Задание 2)
+
+```bash
+# 1. NATS
+docker run -d --name nats -p 4222:4222 nats:latest
+
+# 2. Агенты
+cd agents/course-recommendation && go run . &
+cd agents/assignment-check && go run . &
+cd agents/progress-analysis && go run . &
+cd agents/certificate-gen && go run . &
+
+# 3. Pipeline-тест (выполнит все 4 шага цепочки)
+cd orchestrator && source venv/bin/activate && python3 orchestrator.py
+# В логе искать:
+#   PIPELINE <uuid> — START
+#   Step 1/4 → Step 2/4 → Step 3/4 → Step 4/4
+#   Certificate issued: <uuid> (grade: B)
+
+# 4. Очистка
+docker stop nats && docker rm nats
+```
