@@ -156,3 +156,21 @@ progress-analysis | State saved [agent:progress-analysis:state]: 4 tasks process
 | Run 1 | 1 → 2 | SaveStateAgent |
 | **Restart container** | **2 restored** | **LoadStateAgent** |
 | Run 2 | 2 → 3 → 4 | Инкремент от восстановленного |
+
+---
+
+## Bug Fixes (Code Review)
+
+**Промпт:** Проведи код-ревью, исправь все баги.
+
+**Результат:** Исправлено 5 багов, коммит `690a29b`.
+
+| # | Баг | Фикс |
+|---|-----|------|
+| 1 | 🔴 `shared.Tracer` — no-op, трейсинг не работал с Задания 3 | `var Tracer` → `func Tracer()` — tracer создаётся после инициализации провайдера |
+| 2 | 🟡 Тренд "improving" при равных баллах `[90,90,90]` | Проверка `if improving && declining` → `"stable"` |
+| 3 | 🟡 Ошибка unmarshal Task не публикует ответ → оркестратор висит до таймаута | Вызов `publishError` во всех 4 агентах |
+| 4 | 🟡 Docker SIGTERM не обрабатывался | `signal.Notify(sig, os.Interrupt, syscall.SIGTERM)` во всех агентах |
+| 5 | 🟡 Race condition в `updateState` (параллельные задачи перезаписывают состояние) | `sync.Mutex` в progress-analysis |
+| — | Python лог в CWD, не рядом со скриптом | `Path(__file__).parent / "logs"` |
+| — | Redis timeout 5s → 6s | ReadTimeout/WriteTimeout + контекст |
