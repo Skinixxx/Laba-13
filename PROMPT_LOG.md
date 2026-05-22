@@ -76,3 +76,36 @@
 | 4 | CertificateGen | **Сертификат выдан** — Grade B |
 
 Pipeline ID `2c362a31` — весь chain отработал, сертификат сгенерирован.
+
+---
+
+## Задание 3 — Распределённая трассировка (Jaeger + OpenTelemetry)
+
+**Промпт 1:** Расписать, что необходимо сделать и как это можно сделать.
+
+**Результат:** Предложен план:
+- `shared/otel.go` — инициализация OTel tracer для Go-агентов
+- `orchestrator/tracer.py` — инициализация OTel tracer для Python
+- NATS headers для W3C TraceContext propagation
+- Обновление docker-compose: Jaeger all-in-one (порты 4318/16686)
+
+**Промпт 2:** Реализовать.
+
+**Результат:**
+- `shared/otel.go` — InitTracer(serviceName), ShutdownTracer, InjectTraceContext, ExtractTraceContext
+- 4 Go-агента обновлены: каждый создаёт span на обработку задачи с атрибутами (task.id, user.id, result)
+- `orchestrator/tracer.py` — инициализация OTel с HTTP OTLP exporter
+- `orchestrator/orchestrator.py` — span для pipeline, span для каждого шага, inject trace context в NATS headers
+- docker-compose.yml — добавлен Jaeger + OTEL_EXPORTER_OTLP_ENDPOINT для всех агентов
+- Dockerfile'ы обновлены (shared-модуль включён в контекст сборки)
+
+**Промпт 3:** Протестировать.
+
+**Результат:** Запущены NATS + Jaeger + 4 агента + оркестратор. В Jaeger UI:
+
+| Трейс | Spans | Описание |
+|-------|-------|----------|
+| Individual tests | 9 spans | `test.individual` → 4 дочерних (по одному на агента) + 4 agent.process spans |
+| Pipeline | 9 spans | `pipeline.39c8070e` → 4 step spans + 4 agent.process spans |
+
+Трассировка распределённая: spans от Python-оркестратора и Go-агентов связаны через W3C TraceContext, передаваемый в NATS headers. Jaeger UI доступен на `http://localhost:16686`.

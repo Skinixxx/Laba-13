@@ -8,38 +8,55 @@ services:
       - "8222:8222"
     command: ["-js", "-m", "8222"]
 
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+      - "4317:4317"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
   course-recommendation:
     build:
-      context: ./agents/course-recommendation
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: agents/course-recommendation/Dockerfile
     depends_on:
       - nats
+      - jaeger
     environment:
       - NATS_URL=nats://nats:4222
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
 
   assignment-check:
     build:
-      context: ./agents/assignment-check
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: agents/assignment-check/Dockerfile
     depends_on:
       - nats
+      - jaeger
     environment:
       - NATS_URL=nats://nats:4222
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
 
   progress-analysis:
     build:
-      context: ./agents/progress-analysis
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: agents/progress-analysis/Dockerfile
     depends_on:
       - nats
+      - jaeger
     environment:
       - NATS_URL=nats://nats:4222
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
 
   certificate-gen:
     build:
-      context: ./agents/certificate-gen
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: agents/certificate-gen/Dockerfile
     depends_on:
       - nats
+      - jaeger
     environment:
       - NATS_URL=nats://nats:4222
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318

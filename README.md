@@ -34,7 +34,7 @@ docker stop nats && docker rm nats
 
 1. Разработка полной системы из 3–5 агентов на Go ✅
 2. Цепочки задач (pipeline) ✅
-3. Распределённая трассировка (Jaeger + OpenTelemetry)
+3. Распределённая трассировка (Jaeger + OpenTelemetry) ✅
 4. Агент с состоянием (Redis)
 5. Динамическое масштабирование
 6. Аукционное распределение задач
@@ -389,31 +389,71 @@ cd orchestrator && source venv/bin/activate && python3 orchestrator.py
 docker stop nats && docker rm nats
 ```
 
-**Задание 2 — выполнено:**
-- [x] 2.1. Реализовать `run_pipeline()` в оркестраторе
-- [x] 2.2. Chain: CourseRec → AssignmentCheck → ProgressAnalysis → CertificateGen
-- [x] 2.3. Сквозной pipeline_id для трассировки
-- [x] 2.4. Условная генерация сертификата (passed + completion >= 80%)
+---
 
-### Как запустить (Задание 2)
+## Задание 3: Распределённая трассировка (Jaeger + OpenTelemetry)
+
+### Что сделано
+
+- `shared/otel.go` — инициализация OTel tracer (OTLP HTTP exporter → Jaeger), W3C TraceContext propagation через NATS headers
+- 4 Go-агента — каждый создаёт span на обработку задачи с атрибутами (task.id, user.id, score, result)
+- `orchestrator/tracer.py` — Python OTel инициализация
+- `orchestrator/orchestrator.py` — root span для pipeline + child spans для каждого шага, inject trace context в NATS headers
+- docker-compose.yml — Jaeger all-in-one (порты 4318 OTLP, 16686 UI)
+
+### Архитектура трейсинга
+
+```
+Orchestrator (root span: pipeline.<id>)
+  ├─ step.course_recommend ──► course-recommendation.process
+  ├─ step.assignment_check ──► assignment-check.process
+  ├─ step.progress_analysis ──► progress-analysis.process
+  └─ step.certificate_generate ──► certificate-gen.process
+```
+
+Trace context передаётся через **NATS message headers** (W3C `traceparent`).
+
+### Атрибуты spans
+
+| Агент | Атрибуты |
+|-------|----------|
+| CourseRec | `task.id`, `user.id`, `recommendations.count`, `top.course`, `top.score` |
+| AssignmentCheck | `task.id`, `assignment.id`, `assignment.type`, `assignment.passed`, `assignment.score` |
+| ProgressAnalysis | `task.id`, `progress.completion_pct`, `progress.avg_score`, `progress.trend` |
+| CertificateGen | `task.id`, `certificate.issued`, `certificate.id`, `certificate.grade` |
+
+### Как запустить
 
 ```bash
-# 1. NATS
+# 1. NATS + Jaeger
 docker run -d --name nats -p 4222:4222 nats:latest
+docker run -d --name jaeger -p 16686:16686 -p 4318:4318 \
+  -e COLLECTOR_OTLP_ENABLED=true jaegertracing/all-in-one:latest
 
-# 2. Агенты
+# 2. Агенты (с OTel, шлют трейсы на localhost:4318)
 cd agents/course-recommendation && go run . &
 cd agents/assignment-check && go run . &
 cd agents/progress-analysis && go run . &
 cd agents/certificate-gen && go run . &
 
-# 3. Pipeline-тест (выполнит все 4 шага цепочки)
+# 3. Оркестратор
 cd orchestrator && source venv/bin/activate && python3 orchestrator.py
-# В логе искать:
-#   PIPELINE <uuid> — START
-#   Step 1/4 → Step 2/4 → Step 3/4 → Step 4/4
-#   Certificate issued: <uuid> (grade: B)
 
-# 4. Очистка
-docker stop nats && docker rm nats
+# 4. Открыть Jaeger UI: http://localhost:16686
+#    Service → "orchestrator" → Find Traces
+#    Будут 2 трейса: individual (9 spans) и pipeline (9 spans)
+
+# 5. Очистка
+docker stop nats jaeger && docker rm nats jaeger
 ```
+
+### Прогресс выполнения
+
+**Задание 3 — выполнено:**
+- [x] 3.1. `shared/otel.go` — InitTracer + InjectTraceContext + ExtractTraceContext
+- [x] 3.2. 4 Go-агента — span на каждую задачу с атрибутами
+- [x] 3.3. `orchestrator/tracer.py` — Python OTel init
+- [x] 3.4. Orchestrator — spans для pipeline и отдельных шагов
+- [x] 3.5. W3C TraceContext propagation через NATS headers
+- [x] 3.6. docker-compose с Jaeger
+- [x] 3.7. Протестировано: 2 трейса, 9 spans каждый, Jaeger UI отвечает
