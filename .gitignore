@@ -1,7 +1,11 @@
 orchestrator/venv/
+orchestrator/logs/
 *.log
 __pycache__/
 *.pyc
+*.swp
+*.swo
+.DS_Store
 
 *.pdf
 PROMPT_LOG_EXAMPLE.md
